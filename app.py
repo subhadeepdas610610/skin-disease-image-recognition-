@@ -44,21 +44,17 @@ CONDITION_INFO = {
     },
 }
 
-LOW_CONFIDENCE_THRESHOLD = 0.55  # 55% threshold for uncertain / out-of-distribution inputs
-MELANOMA_ALERT_THRESHOLD = 0.10  # Flag if melanoma appears in top-3 with >= 10% probability
-
 st.set_page_config(page_title="Skin Lesion Classifier", layout="wide")
 
-# Sidebar with model & held-out test set summary
 with st.sidebar:
     st.header("Model & Evaluation Summary")
     st.markdown(
         """
-        - **Backbone:** MobileNetV2 (ImageNet pretrained)
-        - **Dataset:** HAM10000 (10,015 images; 7,470 unique `lesion_id`s)
-        - **Split:** 70% Train (7,017) / 15% Val (1,505) / 15% Test (1,493)
-        - **Preprocessing:** `Resize(256)` → `CenterCrop(224)` → ImageNet Normalize
-        - **Imbalance Handling:** Inverse-frequency weighted Cross-Entropy Loss
+- **Backbone:** MobileNetV2 (ImageNet pretrained)
+- **Dataset:** HAM10000 (10,015 images; 7,470 unique `lesion_id`s)
+- **Split:** 70% Train (7,017) / 15% Val (1,505) / 15% Test (1,493)
+- **Preprocessing:** `Resize(256)` → `CenterCrop(224)` → ImageNet Normalize
+- **Imbalance Handling:** Inverse-frequency weighted Cross-Entropy Loss
         """
     )
     st.divider()
@@ -69,16 +65,9 @@ with st.sidebar:
     m3, m4 = st.columns(2)
     m3.metric("Macro-F1", "0.7028")
     m4.metric("Melanoma Recall", "59.49%")
-    st.caption(
-        f"Alerts trigger when Top-1 confidence < {int(LOW_CONFIDENCE_THRESHOLD * 100)}% "
-        f"or `mel` appears in Top-3 ≥ {int(MELANOMA_ALERT_THRESHOLD * 100)}%."
-    )
 
-st.title("Skin Lesion Classification Prototype (HAM10000)")
-st.warning(
-    "Academic prototype trained on dermatoscopic HAM10000 images. "
-    "Intended strictly for educational demonstration—not a substitute for clinical diagnosis."
-)
+st.title("Skin Lesion Classification System (HAM10000)")
+st.caption("Trained on HAM10000 dermatoscopic images for research and reference; not a clinical diagnostic tool.")
 
 
 @st.cache_resource
@@ -93,13 +82,11 @@ def load_model():
     return model, class_names
 
 
-# Preview transform (before tensor conversion/normalization) so users see the exact 224x224 crop
 crop_preview_transform = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
 ])
 
-# Identical preprocessing pipeline to validation/test evaluation
 transform = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
@@ -133,24 +120,6 @@ if uploaded_file is not None:
         class_names[int(idx.item())]: float(p.item())
         for p, idx in zip(top3_probs, top3_indices)
     }
-
-    # Warning 1: Low confidence / non-dermatoscopic image guard
-    if top_prob < LOW_CONFIDENCE_THRESHOLD:
-        st.warning(
-            f"**Low Prediction Confidence ({confidence:.2f}%):** The model is uncertain about this image. "
-            "If the uploaded file is not a close-up dermatoscopic skin lesion photo (or shows unclear lighting/framing), "
-            "the predicted label may be unreliable."
-        )
-
-    # Warning 2: Melanoma risk alert (even if ranked 2nd or 3rd)
-    if "mel" in top3_dict and top3_dict["mel"] >= MELANOMA_ALERT_THRESHOLD:
-        mel_pct = top3_dict["mel"] * 100
-        rank = list(top3_dict.keys()).index("mel") + 1
-        st.error(
-            f"**High-Risk Alert — Melanoma Detected in Top-3 Differential (Rank #{rank}, {mel_pct:.2f}%):** "
-            "Because missing a melanoma carries severe clinical risk, any lesion with non-trivial melanoma probability "
-            "should be examined promptly by a qualified dermatologist regardless of the top-ranked benign label."
-        )
 
     info = CONDITION_INFO.get(
         code,
