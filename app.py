@@ -84,6 +84,37 @@ def load_model():
     return model, class_names
 
 
+def get_input_warnings(pil_image: Image.Image, confidence: float) -> list[str]:
+    warnings = []
+    width, height = pil_image.size
+    aspect_ratio = width / max(height, 1)
+
+    if width < 100 or height < 100:
+        warnings.append(f"Small image resolution ({width}×{height}); cropped or low-res inputs may be unreliable.")
+
+    if aspect_ratio > 1.6 or aspect_ratio < 0.625:
+        warnings.append(f"Unusual aspect ratio ({aspect_ratio:.2f}:1) for a cropped skin lesion image (e.g., widescreen screenshot or banner).")
+
+    arr = np.asarray(pil_image.convert("RGB"), dtype=np.float32) / 255.0
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    skin_like_mask = (
+        (r > 0.20)
+        & (g > 0.08)
+        & (b > 0.04)
+        & (r > g)
+        & (r > b)
+        & ((np.maximum.reduce([r, g, b]) - np.minimum.reduce([r, g, b])) > 0.04)
+    )
+    skin_ratio = float(np.mean(skin_like_mask))
+    if skin_ratio < 0.25:
+        warnings.append(f"Low skin-tone coverage ({skin_ratio * 100:.1f}% of pixels); this may not be a skin lesion photo.")
+
+    if confidence < 55.0:
+        warnings.append(f"Low top-1 confidence ({confidence:.2f}%); the model may be uncertain or seeing an out-of-domain image.")
+
+    return warnings
+
+
 def generate_gradcam_overlay(model, input_tensor, base_rgb_image, target_idx, alpha=0.45):
     activations = []
     gradients = []
@@ -158,6 +189,14 @@ if uploaded_file is not None:
     top_prob = float(top3_probs[0].item())
     code = class_names[top_idx]
     confidence = top_prob * 100
+
+    input_warnings = get_input_warnings(image, confidence)
+    if input_warnings:
+        st.warning(
+            "**Possible Non-Lesion / Low-Confidence Input:**\n"
+            + "\n".join(f"- {msg}" for msg in input_warnings)
+            + "\n\n*This model was trained only on HAM10000 dermatoscopic skin lesion images.*"
+        )
 
     gradcam_image = generate_gradcam_overlay(model, input_tensor, cropped_preview, top_idx)
 
