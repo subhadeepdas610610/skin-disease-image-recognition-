@@ -1,4 +1,6 @@
 import json
+import matplotlib.cm as cm
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -82,6 +84,47 @@ def load_model():
     return model, class_names
 
 
+def generate_gradcam_overlay(model, input_tensor, base_rgb_image, target_idx, alpha=0.45):
+    activations = []
+    gradients = []
+    target_layer = model.features[-1]
+
+    def forward_hook(_module, _inp, out):
+        activations.append(out)
+
+    def backward_hook(_module, _grad_in, grad_out):
+        gradients.append(grad_out[0])
+
+    fwd_handle = target_layer.register_forward_hook(forward_hook)
+    bwd_handle = target_layer.register_full_backward_hook(backward_hook)
+
+    try:
+        model.zero_grad()
+        logits = model(input_tensor)
+        score = logits[0, target_idx]
+        score.backward()
+    finally:
+        fwd_handle.remove()
+        bwd_handle.remove()
+
+    acts = activations[0][0].detach().cpu().numpy()      # [C, H, W]
+    grads = gradients[0][0].detach().cpu().numpy()     # [C, H, W]
+    weights = np.mean(grads, axis=(1, 2))              # [C]
+
+    cam = np.sum(weights[:, None, None] * acts, axis=0)
+    cam = np.maximum(cam, 0)
+    if cam.max() > 0:
+        cam = cam / cam.max()
+
+    cam_pil = Image.fromarray(np.uint8(cam * 255)).resize(base_rgb_image.size, Image.Resampling.BILINEAR)
+    cam_norm = np.asarray(cam_pil, dtype=np.float32) / 255.0
+    heatmap_rgb = (cm.jet(cam_norm)[:, :, :3] * 255).astype(np.float32)
+
+    base_np = np.asarray(base_rgb_image.convert("RGB"), dtype=np.float32)
+    overlay_np = np.clip((1.0 - alpha) * base_np + alpha * heatmap_rgb, 0, 255).astype(np.uint8)
+    return Image.fromarray(overlay_np)
+
+
 crop_preview_transform = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
@@ -104,10 +147,10 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
     cropped_preview = crop_preview_transform(image)
-    input_tensor = transform(image).unsqueeze(0)
+    input_tensor = transform(image).unsqueeze(0).requires_grad_(True)
 
-    with torch.no_grad():
-        probs = torch.softmax(model(input_tensor), dim=1)[0]
+    logits = model(input_tensor)
+    probs = torch.softmax(logits, dim=1)[0].detach()
 
     probs_np = probs.cpu().numpy()
     top3_probs, top3_indices = torch.topk(probs, k=min(3, len(class_names)))
@@ -115,6 +158,8 @@ if uploaded_file is not None:
     top_prob = float(top3_probs[0].item())
     code = class_names[top_idx]
     confidence = top_prob * 100
+
+    gradcam_image = generate_gradcam_overlay(model, input_tensor, cropped_preview, top_idx)
 
     top3_dict = {
         class_names[int(idx.item())]: float(p.item())
@@ -128,11 +173,17 @@ if uploaded_file is not None:
 
     col1, col2 = st.columns([1, 1.4])
     with col1:
-        img_tab1, img_tab2 = st.tabs(["Original Upload", "Model Input (224×224 Crop)"])
+        img_tab1, img_tab2, img_tab3 = st.tabs([
+            "Original Upload",
+            "Model Input (224×224 Crop)",
+            "Grad-CAM Heatmap",
+        ])
         with img_tab1:
             st.image(image, caption=f"Uploaded: {uploaded_file.name} ({image.size[0]}×{image.size[1]})", use_container_width=True)
         with img_tab2:
             st.image(cropped_preview, caption="After Resize(256) + CenterCrop(224)", use_container_width=True)
+        with img_tab3:
+            st.image(gradcam_image, caption=f"Grad-CAM for {code.upper()} ({confidence:.2f}%)", use_container_width=True)
 
     with col2:
         st.subheader(f"Top Prediction: {code.upper()} — {info['name']}")
