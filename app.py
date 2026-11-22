@@ -203,7 +203,7 @@ if uploaded_file is not None:
     mel_idx = class_names.index("mel") if "mel" in class_names else None
     mel_prob = float(probs[mel_idx].item()) * 100 if mel_idx is not None else 0.0
     
-    if mel_prob >= 10.0:
+    if mel_prob >= 6.0:
         st.warning(
             f"**Elevated Melanoma Probability ({mel_prob:.2f}%):** Even if another class is top-1, "
             "any notable melanoma score warrants clinical / dermatologist evaluation."
