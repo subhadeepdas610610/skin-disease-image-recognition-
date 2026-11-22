@@ -200,6 +200,14 @@ if uploaded_file is not None:
 
     gradcam_image = generate_gradcam_overlay(model, input_tensor, cropped_preview, top_idx)
 
+    mel_idx = class_names.index("mel") if "mel" in class_names else None
+    mel_prob = float(probs[mel_idx].item()) * 100 if mel_idx is not None else 0.0
+    
+    if mel_prob >= 10.0:
+        st.warning(
+            f"**Elevated Melanoma Probability ({mel_prob:.2f}%):** Even if another class is top-1, "
+            "any notable melanoma score warrants clinical / dermatologist evaluation."
+        )
     top3_dict = {
         class_names[int(idx.item())]: float(p.item())
         for p, idx in zip(top3_probs, top3_indices)
